@@ -192,6 +192,9 @@ define_overridable_option(
   EXECUTORCH_BUILD_CUDA "Build the CUDA backend" BOOL OFF
 )
 define_overridable_option(
+  EXECUTORCH_BUILD_HIP "Build the HIP (AMD GPU) backend" BOOL OFF
+)
+define_overridable_option(
   EXECUTORCH_BUILD_METAL "Build the Metal backend" BOOL OFF
 )
 define_overridable_option(
@@ -461,6 +464,16 @@ check_required_options_on(
 
 check_required_options_on(
   IF_ON EXECUTORCH_BUILD_CUDA REQUIRES EXECUTORCH_BUILD_EXTENSION_TENSOR
+)
+
+check_required_options_on(
+  IF_ON EXECUTORCH_BUILD_HIP REQUIRES EXECUTORCH_BUILD_EXTENSION_TENSOR
+)
+
+# CUDA and ROCm both register an AOTI delegate that claims the single
+# DeviceType::CUDA device-allocator slot, so exactly one may be built.
+check_conflicting_options_on(
+  IF_ON EXECUTORCH_BUILD_HIP CONFLICTS_WITH EXECUTORCH_BUILD_CUDA
 )
 
 check_required_options_on(

@@ -89,6 +89,16 @@ class AotiBackend(ABC):
         return False
 
     @classmethod
+    def get_external_data_tag(cls) -> str:
+        """Return the external .ptd tag used when ``save_data_externally`` is True.
+
+        Defaults to the device name, which is not always the right label: the
+        ROCm backend compiles for torch device ``cuda`` (HIP masquerades as CUDA
+        throughout PyTorch) but must not emit a blob claiming to be CUDA.
+        """
+        return f"aoti_{cls.get_device_name()}_blob"
+
+    @classmethod
     def get_extra_aoti_compile_context_manager(
         cls, compile_specs: Optional[List[CompileSpec]] = None
     ):
@@ -324,7 +334,7 @@ class AotiBackend(ABC):
         # Determine whether to save named data externally based on backend setting
         # External: save to separate .ptd file, otherwise merge with .pte file
         external_tag = (
-            f"aoti_{device_name}_blob" if cls.save_data_externally() else None
+            cls.get_external_data_tag() if cls.save_data_externally() else None
         )
 
         named_data_store.add_named_data(weights_blob_key, blob_data, 1, external_tag)

@@ -9,6 +9,7 @@ import functools
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 from typing import List, Optional
@@ -52,6 +53,67 @@ def is_cuda_available() -> bool:
     try:
         _get_cuda_version()
         return True
+    except Exception:
+        return False
+
+
+def _get_rocm_version():
+    """
+    Detect the installed ROCm version.
+
+    Prefers the running torch build, since that is what actually determines
+    whether the HIP backend can be used, and falls back to the ROCm toolchain so
+    a fresh environment (no torch yet) still resolves to a ROCm wheel.
+
+    Returns:
+        (major, minor) tuple, or None if ROCm is not present.
+    """
+    try:
+        import torch
+
+        if torch.version.hip is not None:
+            # Prefer the wheel's own local version tag ("2.13.0+rocm7.14.0"): it
+            # names the index the wheel came from. torch.version.hip is the HIP
+            # runtime version, which usually tracks the ROCm version but is not
+            # guaranteed to, so it is only the fallback.
+            tag = re.search(r"\+rocm(\d+)\.(\d+)", torch.__version__)
+            if tag:
+                return int(tag.group(1)), int(tag.group(2))
+            parts = torch.version.hip.split(".")
+            return int(parts[0]), int(parts[1])
+    except Exception:
+        pass
+
+    hipcc = shutil.which("hipcc")
+    if hipcc is None:
+        return None
+    try:
+        output = subprocess.check_output(
+            [hipcc, "--version"], stderr=subprocess.STDOUT, text=True
+        )
+        match = re.search(r"HIP version:\s*(\d+)\.(\d+)", output)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    except Exception:
+        pass
+    return None
+
+
+def is_hip_available() -> bool:
+    """
+    Check whether the installed torch is a ROCm build with a usable AMD GPU.
+
+    Unlike CUDA, this is detected through torch rather than a toolkit probe: the
+    ROCm backend compiles models with AOTInductor, so what matters is that torch
+    itself is a HIP build, not that a system ROCm install happens to exist.
+
+    Returns:
+        True if torch reports a HIP version and a device is visible.
+    """
+    try:
+        import torch
+
+        return torch.version.hip is not None and torch.cuda.is_available()
     except Exception:
         return False
 
@@ -209,6 +271,18 @@ def determine_torch_url(torch_nightly_url_base):
             "Windows detected, using CPU-only PyTorch until CUDA support is available"
         )
         return f"{torch_nightly_url_base}/cpu"
+
+    # Check ROCm before CUDA. An AMD machine has no nvcc, so CUDA detection below
+    # would fall through to the CPU-only wheel and overwrite the user's ROCm
+    # torch -- which silently disables the HIP backend, since it needs
+    # torch.version.hip set.
+    rocm_version = _get_rocm_version()
+    if rocm_version is not None:
+        major, minor = rocm_version
+        torch_url = f"{torch_nightly_url_base}/rocm{major}.{minor}"
+        print(f"Detected ROCm version: {major}.{minor}")
+        print(f"Using PyTorch URL: {torch_url}")
+        return torch_url
 
     print("Attempting to detect CUDA via nvcc...")
 

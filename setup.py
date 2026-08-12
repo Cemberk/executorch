@@ -113,6 +113,7 @@ def _minimal_cmake_flags() -> List[str]:
     return [
         "-DEXECUTORCH_BUILD_COREML=OFF",
         "-DEXECUTORCH_BUILD_CUDA=OFF",
+        "-DEXECUTORCH_BUILD_HIP=OFF",
         "-DEXECUTORCH_BUILD_DEVTOOLS=OFF",
         "-DEXECUTORCH_BUILD_EXTENSION_DATA_LOADER=OFF",
         "-DEXECUTORCH_BUILD_EXTENSION_FLAT_TENSOR=OFF",
@@ -891,6 +892,19 @@ class CustomBuild(build):
         ):
             cmake_configuration_args += ["-DEXECUTORCH_BUILD_CUDA=ON"]
 
+        # Same for ROCm. CUDA is checked first because the two backends claim the
+        # same device-allocator slot and cannot both be built; a machine with a
+        # ROCm torch build will not report CUDA available, so they do not race.
+        if (
+            not minimal_build
+            and "-DEXECUTORCH_BUILD_CUDA=ON" not in cmake_configuration_args
+            and install_utils.is_hip_available()
+            and install_utils.is_cmake_option_on(
+                cmake_configuration_args, "EXECUTORCH_BUILD_HIP", default=True
+            )
+        ):
+            cmake_configuration_args += ["-DEXECUTORCH_BUILD_HIP=ON"]
+
         # Unlike CUDA, Vulkan also needs its third-party submodules, which
         # aren't in the default checkout, along with glslc. A partial checkout
         # no-ops here rather than failing in CMake.
@@ -1016,6 +1030,10 @@ class CustomBuild(build):
 
             if cmake_cache.is_enabled("EXECUTORCH_BUILD_CUDA"):
                 cmake_build_args += ["--target", "aoti_cuda_backend"]
+                cmake_build_args += ["--target", "aoti_common_shims_slim"]
+
+            if cmake_cache.is_enabled("EXECUTORCH_BUILD_HIP"):
+                cmake_build_args += ["--target", "aoti_hip_backend"]
                 cmake_build_args += ["--target", "aoti_common_shims_slim"]
 
             if cmake_cache.is_enabled("EXECUTORCH_BUILD_EXTENSION_MODULE"):
@@ -1171,6 +1189,13 @@ setup(
                     dst="executorch/backends/cuda/",
                     is_dynamic_lib=True,
                     dependent_cmake_flags=["EXECUTORCH_BUILD_CUDA"],
+                ),
+                BuiltFile(
+                    src_dir="%CMAKE_CACHE_DIR%/backends/hip/%BUILD_TYPE%/",
+                    src_name="aoti_hip_shims",
+                    dst="executorch/backends/hip/",
+                    is_dynamic_lib=True,
+                    dependent_cmake_flags=["EXECUTORCH_BUILD_HIP"],
                 ),
                 BuiltFile(
                     src_dir="%CMAKE_CACHE_DIR%/backends/qualcomm/%BUILD_TYPE%/",

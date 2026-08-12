@@ -137,6 +137,7 @@ exclude_patterns = [
     'backends/apple/**',
     'backends/cadence/**',
     'backends/cuda/**',
+    'backends/hip/**',
     'backends/mediatek/**',
     'backends/mlx/**',
     'backends/openvino/**',

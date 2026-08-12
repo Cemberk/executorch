@@ -1241,10 +1241,17 @@ class ET_EXPERIMENTAL CudaBackend final
 
 } // namespace executorch::backends::cuda
 
+// The ROCm backend reuses this translation unit compiled under HIP (see
+// backends/hip/runtime/compat), where it must claim the delegate id that
+// HipPartitioner tags into the .pte instead of the CUDA one.
+#ifndef ET_AOTI_GPU_BACKEND_NAME
+#define ET_AOTI_GPU_BACKEND_NAME "CudaBackend"
+#endif
+
 namespace executorch::backends {
 namespace {
 auto cls = cuda::CudaBackend();
-executorch::runtime::Backend backend{"CudaBackend", &cls};
+executorch::runtime::Backend backend{ET_AOTI_GPU_BACKEND_NAME, &cls};
 static executorch::runtime::Error success_with_compiler =
     register_backend(backend);
 

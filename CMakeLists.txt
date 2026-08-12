@@ -236,7 +236,9 @@ if(EXECUTORCH_ENABLE_BUNDLE_IO)
   add_definitions(-DET_BUNDLE_IO_ENABLED)
 endif()
 
-if(EXECUTORCH_BUILD_CUDA)
+# Selects the GPU-resident SlimTensor paths. ROCm reaches them through the
+# cuda->hip compat headers, so it sets the same flag.
+if(EXECUTORCH_BUILD_CUDA OR EXECUTORCH_BUILD_HIP)
   add_definitions(-DCUDA_AVAILABLE=1)
 endif()
 
@@ -801,6 +803,7 @@ endif()
 # imported targets (e.g. MKL::MKL) aren't created in child directory scopes and
 # then duplicated when found again at root scope.
 if(EXECUTORCH_BUILD_CUDA
+   OR EXECUTORCH_BUILD_HIP
    OR EXECUTORCH_BUILD_METAL
    OR EXECUTORCH_BUILD_PYBIND
 )
@@ -809,8 +812,9 @@ endif()
 
 # Backend-neutral caller-stream guard consumed by the CUDA AOTI backend (and the
 # vendored torch-tensorrt delegate). Built before backends/aoti and
-# backends/cuda, which link it.
-if(EXECUTORCH_BUILD_CUDA)
+# backends/cuda, which link it. The ROCm backend links the same target, built
+# against HIP through the compat headers.
+if(EXECUTORCH_BUILD_CUDA OR EXECUTORCH_BUILD_HIP)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/extension/cuda)
   install(
     DIRECTORY extension/cuda/
@@ -821,8 +825,8 @@ if(EXECUTORCH_BUILD_CUDA)
   list(APPEND _executorch_extensions extension_cuda)
 endif()
 
-# Build common AOTI functionality if needed by CUDA or Metal backends
-if(EXECUTORCH_BUILD_CUDA OR EXECUTORCH_BUILD_METAL)
+# Build common AOTI functionality if needed by CUDA, ROCm, or Metal backends
+if(EXECUTORCH_BUILD_CUDA OR EXECUTORCH_BUILD_HIP OR EXECUTORCH_BUILD_METAL)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/backends/aoti)
 endif()
 
@@ -832,6 +836,14 @@ if(EXECUTORCH_BUILD_CUDA)
   # Add aoti_cuda_backend to backends - it transitively includes aoti_cuda_shims
   # and cuda_platform
   list(APPEND _executorch_backends aoti_cuda_backend)
+endif()
+
+if(EXECUTORCH_BUILD_HIP)
+  # Build ROCm-specific AOTI functionality. Reuses the CUDA runtime sources
+  # compiled against HIP; see backends/hip/CMakeLists.txt.
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/backends/hip)
+  # aoti_hip_backend transitively includes aoti_hip_shims and hip_platform
+  list(APPEND _executorch_backends aoti_hip_backend)
 endif()
 
 if(EXECUTORCH_BUILD_METAL)
@@ -1049,10 +1061,13 @@ if(EXECUTORCH_BUILD_PYBIND)
       torch
   )
 
-  # Build common AOTI functionality if needed by CUDA or Metal backends
+  # Build common AOTI functionality if needed by CUDA, ROCm, or Metal backends
   if(EXECUTORCH_BUILD_CUDA)
     # CUDA uses SlimTensor-based shims
     list(APPEND _dep_libs aoti_cuda_backend)
+  elseif(EXECUTORCH_BUILD_HIP)
+    # ROCm uses the same SlimTensor-based shims, compiled against HIP
+    list(APPEND _dep_libs aoti_hip_backend)
   elseif(EXECUTORCH_BUILD_METAL)
     # Metal still uses ETensor-based shims (for now)
     list(APPEND _dep_libs aoti_common)
@@ -1103,6 +1118,10 @@ if(EXECUTORCH_BUILD_PYBIND)
 
   if(EXECUTORCH_BUILD_CUDA)
     string(APPEND _portable_lib_rpath ":$ORIGIN/../../backends/cuda")
+  endif()
+
+  if(EXECUTORCH_BUILD_HIP)
+    string(APPEND _portable_lib_rpath ":$ORIGIN/../../backends/hip")
   endif()
 
   if(EXECUTORCH_BUILD_QNN)

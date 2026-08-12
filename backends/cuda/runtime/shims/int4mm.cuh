@@ -47,6 +47,8 @@
 #include <executorch/backends/aoti/slim/c10/core/ScalarType.h>
 #include <executorch/backends/aoti/utils.h>
 
+#include <cstring>
+
 #if (defined(USE_ROCM) && ROCM_VERSION >= 50700) || ((defined(CUDA_VERSION) && CUDA_VERSION >= 12000) && (!defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 800)))
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
@@ -187,12 +189,29 @@ constexpr int32_t kWarpSize = 64;
 template<typename T, uint32_t Rank>
 using VecT = T __attribute__((ext_vector_type(Rank)));
 
-/*
- * Not used by ET
+// CDNA2 is the first AMD architecture with the MFMA instructions this kernel
+// needs. Upstream ATen answers this through getCUDAHooks().isGPUArch(), which
+// the ET vendoring dropped, so query HIP directly instead. gcnArchName carries
+// feature suffixes ("gfx942:sramecc+:xnack-"), hence the prefix match.
 static bool isCDNA2orLater(int index) {
-    return at::detail::getCUDAHooks().isGPUArch({"gfx90a", "gfx942"}, index);
+  hipDeviceProp_t props;
+  if (hipGetDeviceProperties(&props, index) != hipSuccess) {
+    return false;
+  }
+  static constexpr const char* kSupported[] = {
+      "gfx90a", // CDNA2
+      "gfx940", // CDNA3
+      "gfx941",
+      "gfx942",
+      "gfx950", // CDNA4
+  };
+  for (const char* arch : kSupported) {
+    if (std::strncmp(props.gcnArchName, arch, std::strlen(arch)) == 0) {
+      return true;
+    }
+  }
+  return false;
 }
-*/
 
 #else
 constexpr int32_t kWarpSize = 32;
@@ -1143,8 +1162,15 @@ Tensor* _weight_int4pack_mm_cuda(
   //     A.device() == B.device() && A.device() == qScaleAndZeros.device());
 
 #if defined(USE_ROCM)
-  if (!isCDNA2orLater(A.device().index())) {
-    ET_CHECK(false, "_weight_int4pack_mm_cuda is only supported on AMD gpu arch greater than or equal to CDNA2");
+  {
+    // SlimTensor carries no device index here (see the skipped checks above),
+    // so validate the device the kernel will actually launch on.
+    int device_index = 0;
+    ET_CHECK_MSG(
+        hipGetDevice(&device_index) == hipSuccess, "hipGetDevice failed");
+    ET_CHECK_MSG(
+        isCDNA2orLater(device_index),
+        "_weight_int4pack_mm is only supported on AMD GPU arch CDNA2 or later");
   }
 #endif
 
